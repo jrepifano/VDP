@@ -2,7 +2,7 @@ import torch
 
 
 def logexp(a):
-    return torch.log1p(torch.exp(a))
+    return torch.log(1.+torch.exp(torch.clamp(a, min=-88, max=88)))
 
 
 class Linear(torch.nn.Module):
@@ -65,6 +65,6 @@ def ELBOLoss(mu, sigma, y):
     sigma_clamped = torch.clamp(sigma, 1e-10, 1e10)
     constant = -((N * l) / 2) * (torch.log(2 * pi))    # Constant breaks network
     log_det = (N / 2) * torch.log(1e-3+torch.prod(sigma_clamped, dim=1))
-    likelihood = 0.5*torch.sum(((criterion(mu, y).unsqueeze(1).repeat_interleave(10, dim=1)**2).unsqueeze(1) @ torch.reciprocal(sigma_clamped).unsqueeze(2)).view(-1))
+    likelihood = 0.5*torch.sum(((criterion(mu, y).unsqueeze(1).repeat_interleave(len(torch.unique(y)), dim=1)**2).unsqueeze(1) @ torch.reciprocal(sigma_clamped).unsqueeze(2)).view(-1))
     loss = (log_det+likelihood)
     return torch.mean(loss)

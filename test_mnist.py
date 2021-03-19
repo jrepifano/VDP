@@ -1,5 +1,6 @@
 import os
 import vdp
+import time
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -23,9 +24,6 @@ class Model(torch.nn.Module):
         self.softmax = vdp.Softmax()
 
     def forward(self, x):
-        batch_size, channels, width, height = x.size()
-        # (b, 1, 28, 28) -> (b, 1*28*28)
-        x = x.view(batch_size, -1)  # Reshapes image to 1-D tensor
         mu, sigma = self.layer_1(x)
         mu = self.bn1(mu)
         mu, sigma = self.relu(mu, sigma)
@@ -51,40 +49,35 @@ def main():
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
     mnist_train = FashionMNIST(os.getcwd(), train=True, download=True, transform=transform)
     mnist_test = FashionMNIST(os.getcwd(), train=False, download=True, transform=transform)
-    trainloader = DataLoader(mnist_train, batch_size=60000, num_workers=2,
-                             shuffle=True)  # IF YOU CAN FIT THE DATA INTO MEMORY DO NOT USE DATALOADERS
-    testloader = DataLoader(mnist_test, batch_size=10000, num_workers=2,
-                            shuffle=True)  # Code will run so much faster without dataloaders for small(ish) datasets
+    x_train, y_train = mnist_train.data.view(60000, -1), mnist_train.targets
+    x_test, y_test = mnist_test.data.view(10000, -1), mnist_test.targets
     model = Model()
     no_epochs = 20
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
     model.to('cuda:0')
     train_accs = []
     test_accs = []
+    start_time = time.time()
     for epoch in range(no_epochs):
         model.train()
         total_loss = 0
-        for itr, (x, y) in enumerate(trainloader):
-            x, y = x.to('cuda:0'), y.to('cuda:0')
-            optimizer.zero_grad()
-            mu, sigma = model.forward(x)
-            loss = vdp.ELBOLoss(mu, sigma, y)+0.002*(model.layer_1.kl_term()+model.layer_2.kl_term())
-            total_loss += loss.item()
-            loss.backward()
-            optimizer.step()
-            train_acc = model.score(mu, y)
-        print('Epoch {}/{}: Training Loss: {:2f}'.format(epoch + 1, no_epochs, total_loss))
+        optimizer.zero_grad()
+        mu, sigma = model.forward(x_train.float().to('cuda:0'))
+        loss = vdp.ELBOLoss(mu, sigma, y_train.to('cuda:0'))+0.0002*(model.layer_1.kl_term()+model.layer_2.kl_term())
+        total_loss += loss.item()
+        loss.backward()
+        optimizer.step()
+        train_acc = model.score(mu, y_train.to('cuda:0'))
+        print('Epoch {}/{}: Training Loss: {:.2f}'.format(epoch + 1, no_epochs, total_loss))
         print('Train Accuracy: {:.2f}'.format(train_acc))
         train_accs.append(train_acc)
         model.eval()  # This removes stuff like dropout and batch norm for inference stuff
         total_loss = 0
-        for itr, (x, y) in enumerate(testloader):
-            x, y = x.to('cuda:0'), y.to('cuda:0')
-            mu, sigma = model.forward(x)
-            loss = vdp.ELBOLoss(mu, sigma, y)+0.002*(model.layer_1.kl_term()+model.layer_2.kl_term())
-            total_loss += loss.item()
-            test_acc = model.score(mu, y)
-        print('Test Loss: {:2f},    Test Accuracy: {:.2f}'.format(total_loss, test_acc))
+        mu, sigma = model.forward(x_test.float().to('cuda:0'))
+        loss = vdp.ELBOLoss(mu, sigma, y_test.to('cuda:0'))+0.0002*(model.layer_1.kl_term()+model.layer_2.kl_term())
+        total_loss += loss.item()
+        test_acc = model.score(mu, y_test.to('cuda:0'))
+        print('Test Loss: {:.2f},    Test Accuracy: {:.2f}'.format(total_loss, test_acc))
         test_accs.append(test_acc)
     plt.plot(np.arange(no_epochs), train_accs, label='Train Accuracy')
     plt.plot(np.arange(no_epochs), test_accs, label='Test Accuracy')
@@ -93,18 +86,17 @@ def main():
     plt.title('Fashion MNIST: Small Network VDP++')
     plt.legend()
     plt.show()
+    print('Train and val time for {} epochs: {:.2f}'.format(no_epochs, (time.time()-start_time)))
     snrs = [-6, -3, 1, 5, 10, 20]
     sigmas = list()
     for snr in range(len(snrs)):
-        for itr, (x, y) in enumerate(testloader):
-            x, y = x.to('cuda:0'), y.to('cuda:0')
-            x = add_noise(x.view(10000, -1).cpu().numpy(), snrs[snr])
-            mu, sigma = model.forward(torch.from_numpy(x).view(10000, 1, 28, 28).float().to('cuda:0'))
-            sigmas.append(torch.median(torch.mean(sigma, dim=1)).detach().cpu().numpy())
+        x_noisy = add_noise(x_test.cpu().numpy(), snrs[snr])
+        mu, sigma = model.forward(torch.from_numpy(x_noisy).float().to('cuda:0'))
+        sigmas.append(torch.mean(torch.mean(torch.abs(sigma), dim=1)).detach().cpu().numpy())
     plt.figure()
     plt.plot(snrs, sigmas)
     plt.xlabel('SNR (dB)')
-    plt.ylabel('Median Mean Test Sigma')
+    plt.ylabel('Mean Mean Absolute Test Sigma')
     plt.title('Fashion MNIST: Small network VDP++')
     plt.show()
     pass
