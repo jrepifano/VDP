@@ -19,10 +19,10 @@ for i in range(len(x)):
         print(sigma_ij)
 
 
-v = torch.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]).float()
-J = jacobian(square_sum, (v, v))[1]
-print(J)
-jvp_ = jvp(square_sum, (v, v), (v, v))[1]
-print(jvp_)
-vjp_ = vjp(square_sum, (v, v), v)[1]
-print(vjp_)
+# v = torch.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]).float()
+# J = jacobian(square_sum, (v, v))[1]
+# print(J)
+# jvp_ = jvp(square_sum, (v, v), (v, v))[1]
+# print(jvp_)
+# vjp_ = vjp(square_sum, (v, v), v)[1]
+# print(vjp_)

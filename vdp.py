@@ -9,27 +9,27 @@ class Linear(torch.nn.Module):
     def __init__(self, in_features, out_features, bias=True, input_flag=False):
         super(Linear, self).__init__()
         self.input_flag = input_flag
-        self.mean = torch.nn.Linear(in_features, out_features, bias)
+        self.mu = torch.nn.Linear(in_features, out_features, bias)
         self.sigma = torch.nn.Linear(in_features, out_features, bias)
-        torch.nn.init.normal_(self.mean.weight, mean=0, std=0.1)
+        torch.nn.init.normal_(self.mu.weight, mean=0, std=0.1)
         torch.nn.init.uniform_(self.sigma.weight, a=-12, b=-2.2)
 
     def forward(self, mu_x, sigma_x=torch.tensor(0)):
         if self.input_flag:
-            mu_y = self.mean(mu_x)
+            mu_y = self.mu(mu_x)
             sigma_y = (mu_x**2 @ logexp(self.sigma.weight).T) + self.sigma.bias
             pass
         else:
-            mu_y = self.mean(mu_x)
+            mu_y = self.mu(mu_x)
             sigma_y = (logexp(sigma_x) @ logexp(self.sigma.weight).T) +\
                       (mu_x**2 @ logexp(self.sigma.weight).T) + \
-                      (self.mean.weight**2 @ logexp(sigma_x).T).T + self.sigma.bias
+                      (self.mu.weight**2 @ logexp(sigma_x).T).T + self.sigma.bias
             pass
         return mu_y, sigma_y
 
     def kl_term(self):
-        kl = 0.5*torch.mean(self.mean.weight.shape[0]*logexp(self.sigma.weight)+torch.norm(self.mean.weight)**2
-                           - self.mean.weight.shape[0]-self.mean.weight.shape[0]*logexp(self.sigma.weight))
+        kl = 0.5*torch.mean(self.mu.weight.shape[0]*logexp(self.sigma.weight)+torch.norm(self.mu.weight)**2
+                           - self.mu.weight.shape[0]-self.mu.weight.shape[0]*logexp(self.sigma.weight))
         return kl
 
 
@@ -50,10 +50,14 @@ class Softmax(torch.nn.Module):
         self.softmax = torch.nn.Softmax(dim=1)
 
     def forward(self, mu, sigma):
+        # This is sorta incorrect. It will sum the rows of the product instead of
+        # giving us just the diagonal elements of the product...
+        # need to find a way to compute J**2 @ sigma without directly computing J
         jvp = torch.autograd.functional.jvp(self.softmax, mu, sigma)
         sigma = torch.autograd.functional.vjp(self.softmax, mu, jvp[1])[1]
         mu = self.softmax(mu)
         return mu, sigma
+
 
 def ELBOLoss(mu, sigma, y):
     N = len(mu)

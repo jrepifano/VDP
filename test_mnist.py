@@ -63,7 +63,7 @@ def main():
         total_loss = 0
         optimizer.zero_grad()
         mu, sigma = model.forward(x_train.float().to('cuda:0'))
-        loss = vdp.ELBOLoss(mu, sigma, y_train.to('cuda:0'))+0.0002*(model.layer_1.kl_term()+model.layer_2.kl_term())
+        loss = vdp.ELBOLoss(mu, sigma, y_train.to('cuda:0'))-(model.layer_1.kl_term()+model.layer_2.kl_term())
         total_loss += loss.item()
         loss.backward()
         optimizer.step()
@@ -74,7 +74,7 @@ def main():
         model.eval()  # This removes stuff like dropout and batch norm for inference stuff
         total_loss = 0
         mu, sigma = model.forward(x_test.float().to('cuda:0'))
-        loss = vdp.ELBOLoss(mu, sigma, y_test.to('cuda:0'))+0.0002*(model.layer_1.kl_term()+model.layer_2.kl_term())
+        loss = vdp.ELBOLoss(mu, sigma, y_test.to('cuda:0'))-(model.layer_1.kl_term()+model.layer_2.kl_term())
         total_loss += loss.item()
         test_acc = model.score(mu, y_test.to('cuda:0'))
         print('Test Loss: {:.2f},    Test Accuracy: {:.2f}'.format(total_loss, test_acc))
