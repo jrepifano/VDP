@@ -9,7 +9,7 @@ from torchvision.datasets import FashionMNIST
 from torch.utils.data import DataLoader
 
 os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'  # Set this flag to set your devices. For example if I set '6,7', then cuda:0 and cuda:1 in code will be cuda:6 and cuda:7 on hardware
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 class Model(torch.nn.Module):
@@ -17,9 +17,11 @@ class Model(torch.nn.Module):
         super(Model, self).__init__()
         # mnist images are (1, 28, 28) (channels, width, height)
         self.layer_1 = vdp.Linear(28 * 28, 128, input_flag=True)
-        self.layer_2 = vdp.Linear(128, 10)
+        self.layer_2 = vdp.Linear(128, 50)
+        self.layer_3 = vdp.Linear(50, 10)
         self.bn1 = torch.nn.BatchNorm1d(128)
-        self.bn2 = torch.nn.BatchNorm1d(10)
+        self.bn2 = torch.nn.BatchNorm1d(50)
+        self.bn3 = torch.nn.BatchNorm1d(10)
         self.relu = vdp.ReLU()
         self.softmax = vdp.Softmax()
 
@@ -29,6 +31,9 @@ class Model(torch.nn.Module):
         mu, sigma = self.relu(mu, sigma)
         mu, sigma = self.layer_2(mu, sigma)
         mu = self.bn2(mu)
+        mu, sigma = self.relu(mu, sigma)
+        mu, sigma = self.layer_3(mu, sigma)
+        mu = self.bn3(mu)
         mu, sigma = self.softmax(mu, sigma)
         return mu, sigma
 
@@ -52,8 +57,8 @@ def main():
     x_train, y_train = mnist_train.data.view(60000, -1), mnist_train.targets
     x_test, y_test = mnist_test.data.view(10000, -1), mnist_test.targets
     model = Model()
-    no_epochs = 20
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+    no_epochs = 100
+    optimizer = torch.optim.Adam(model.parameters(), lr=8e-2)
     model.to('cuda:0')
     train_accs = []
     test_accs = []
@@ -63,9 +68,13 @@ def main():
         total_loss = 0
         optimizer.zero_grad()
         mu, sigma = model.forward(x_train.float().to('cuda:0'))
-        loss = vdp.ELBOLoss(mu, sigma, y_train.to('cuda:0'))-(model.layer_1.kl_term()+model.layer_2.kl_term())
+        loss = vdp.ELBOLoss(mu, sigma, y_train.to('cuda:0'))-2*(model.layer_1.kl_term()+model.layer_2.kl_term()+model.layer_3.kl_term())
         total_loss += loss.item()
         loss.backward()
+        init_norms_mu = [torch.norm(model.layer_1.mu.weight), torch.norm(model.layer_2.mu.weight), torch.norm(model.layer_3.mu.weight)]
+        init_norms = [torch.norm(model.layer_1.sigma.weight), torch.norm(model.layer_2.sigma.weight), torch.norm(model.layer_3.sigma.weight)]
+        # print(model.layer_1.mu.weight.grad)
+        # print(model.layer_1.sigma.weight.grad)
         optimizer.step()
         train_acc = model.score(mu, y_train.to('cuda:0'))
         print('Epoch {}/{}: Training Loss: {:.2f}'.format(epoch + 1, no_epochs, total_loss))
@@ -74,7 +83,7 @@ def main():
         model.eval()  # This removes stuff like dropout and batch norm for inference stuff
         total_loss = 0
         mu, sigma = model.forward(x_test.float().to('cuda:0'))
-        loss = vdp.ELBOLoss(mu, sigma, y_test.to('cuda:0'))-(model.layer_1.kl_term()+model.layer_2.kl_term())
+        loss = vdp.ELBOLoss(mu, sigma, y_test.to('cuda:0'))-2*(model.layer_1.kl_term()+model.layer_2.kl_term())
         total_loss += loss.item()
         test_acc = model.score(mu, y_test.to('cuda:0'))
         print('Test Loss: {:.2f},    Test Accuracy: {:.2f}'.format(total_loss, test_acc))
@@ -99,7 +108,12 @@ def main():
     plt.ylabel('Mean Mean Absolute Test Sigma')
     plt.title('Fashion MNIST: Small network VDP++')
     plt.show()
+    print(init_norms_mu)
+    print([torch.norm(model.layer_1.mu.weight), torch.norm(model.layer_2.mu.weight), torch.norm(model.layer_3.mu.weight)])
+    print(init_norms)
+    print([torch.norm(model.layer_1.sigma.weight), torch.norm(model.layer_2.sigma.weight), torch.norm(model.layer_3.sigma.weight)])
     pass
+
 
 
 if __name__ == '__main__':
