@@ -11,8 +11,8 @@ class Linear(torch.nn.Module):
         self.input_flag = input_flag
         self.mu = torch.nn.Linear(in_features, out_features, bias)
         self.sigma = torch.nn.Linear(in_features, out_features, bias)
-        torch.nn.init.normal_(self.mu.weight, mean=0, std=0.1)
-        torch.nn.init.uniform_(self.sigma.weight, a=0, b=4)
+        torch.nn.init.xavier_normal_(self.mu.weight)
+        torch.nn.init.uniform_(self.sigma.weight, a=0, b=10)
 
 
     def forward(self, mu_x, sigma_x=torch.tensor(0., requires_grad=True)):
@@ -22,9 +22,9 @@ class Linear(torch.nn.Module):
             pass
         else:
             mu_y = self.mu(mu_x)
-            sigma_y = (sigma_x @ logexp(self.sigma.weight).T) +\
-                      (mu_x**2 @ logexp(self.sigma.weight).T) + \
-                      (self.mu.weight**2 @ sigma_x.T).T + self.sigma.bias
+            sigma_y = (logexp(self.sigma.weight) @ sigma_x.T).T + \
+                      (self.mu.weight**2 @ sigma_x.T).T + \
+                      (mu_x**2 @ logexp(self.sigma.weight).T) + self.sigma.bias
             pass
         return mu_y, sigma_y
 
@@ -54,16 +54,22 @@ class Softmax(torch.nn.Module):
         # This is sorta incorrect. It will sum the rows of the product instead of
         # giving us just the diagonal elements of the product...
         # need to find a way to compute J**2 @ sigma without directly computing J
-        jvp = torch.autograd.functional.jvp(self.softmax, mu, sigma, create_graph=True)[1]
-        sigma = torch.autograd.functional.vjp(self.softmax, mu, jvp, create_graph=True)[1]
+        # jvp = torch.autograd.functional.jvp(self.softmax, mu, sigma, create_graph=True)[1]
+        # sigma = torch.autograd.functional.vjp(self.softmax, mu, jvp, create_graph=True)[1]
+        # print(mu)
         mu = self.softmax(mu)
+        # print(mu)
+        J = mu*(1-mu)
+        sigma = (J**2) * sigma
         return mu, sigma
 
 
 def ELBOLoss(mu, sigma, y):
-    y_hot = torch.nn.functional.one_hot(y)
-    sigma_clamped = torch.log(1+torch.exp(torch.clamp(sigma, 0, 87)))
-    log_det = torch.log(torch.prod(sigma_clamped, dim=1))
-    likelihood = 0.5*torch.sum(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
-    loss = (log_det+likelihood)
-    return torch.mean(loss)
+    y_hot = torch.nn.functional.one_hot(y, num_classes=10)
+    num_samples = y_hot.shape[0]
+    sigma_clamped = torch.log(1+torch.exp(torch.clamp(sigma, 0, 10)))
+    # print(torch.sum(sigma))
+    # print(torch.sum(sigma_clamped))
+    log_det = (1/num_samples)*torch.log(torch.prod(sigma_clamped, dim=1))
+    likelihood = (1/num_samples)*(0.5*torch.sum(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped)))
+    return torch.mean(log_det), likelihood
