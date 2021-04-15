@@ -65,7 +65,7 @@ def main():
     train_accs = []
     test_accs = []
     start_time = time.time()
-    log_det, likelihood, kl = list(), list(), list()
+    log_det, log_likelihood, kl = list(), list(), list()
     alpha = 1
     beta_1 = 0.1
     beta_2 = 0.4
@@ -74,14 +74,14 @@ def main():
         total_loss = 0
         optimizer.zero_grad()
         mu, sigma = model.forward(x_train.float().to('cuda:0'))
-        log_det_i, likelihood_i = vdp.ELBOLoss(mu, sigma, y_train.to('cuda:0'))
+        log_det_i, log_likelihood_i = vdp.ELBOLoss(mu, sigma, y_train.to('cuda:0'))
         kl_i = (beta_1*model.layer_1.kl_term()+beta_2*model.layer_2.kl_term())
-        loss = alpha*log_det_i+likelihood_i-(kl_i)
+        loss = alpha*log_det_i+log_likelihood_i + (kl_i)
         total_loss += loss.item()
         loss.backward()
         optimizer.step()
         log_det.append(log_det_i.detach().cpu().numpy())
-        likelihood.append(likelihood_i.detach().cpu().numpy())
+        log_likelihood.append(log_likelihood_i.detach().cpu().numpy())
         kl.append(kl_i.detach().cpu().numpy())
         train_acc = model.score(mu, y_train.to('cuda:0'))
         train_accs.append(train_acc)
@@ -91,7 +91,7 @@ def main():
         test_accs.append(test_acc)
         if (epoch % 500) == 0 or (epoch == no_epochs-1):
             print('log det: {:.4f}'.format(alpha*log_det_i))
-            print('likelihood: {:.4f}'.format(likelihood_i))
+            print('likelihood: {:.4f}'.format(log_likelihood_i))
             print('kl: {:.4f}'.format(kl_i))
             print('Epoch {}/{}: Training Loss: {:.2f}'.format(epoch + 1, no_epochs, total_loss))
             print('Train Accuracy: {:.2f}'.format(train_acc))

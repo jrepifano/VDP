@@ -29,10 +29,8 @@ class Linear(torch.nn.Module):
         return mu_y, sigma_y
 
     def kl_term(self):
-        # kl = 0.5*torch.mean(self.mu.weight.shape[1] * softplus(self.sigma.weight) + torch.norm(self.mu.weight)**2
-        #                     - self.mu.weight.shape[1] - self.mu.weight.shape[1] * torch.log(softplus(self.sigma.weight)))
-        kl = 0.5*torch.mean(self.mu.weight.shape[1] * torch.log(softplus(self.sigma.weight)) -
-                            torch.norm(self.mu.weight)**2 - self.mu.weight.shape[1] * softplus(self.sigma.weight))
+        kl = 0.5*torch.mean(self.mu.weight.shape[1] * softplus(self.sigma.weight) + torch.norm(self.mu.weight)**2
+                            - self.mu.weight.shape[1] - self.mu.weight.shape[1] * torch.log(softplus(self.sigma.weight)))
         return kl
 
 
@@ -67,5 +65,5 @@ def ELBOLoss(mu, sigma, y):
     # print(torch.sum(sigma))
     # print(torch.sum(sigma_clamped))
     log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1)))
-    likelihood = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
-    return log_det, likelihood
+    log_likelihood = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
+    return log_det, log_likelihood
