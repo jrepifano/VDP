@@ -5,6 +5,12 @@ def softplus(a):
     return torch.log(1.+torch.exp(torch.clamp(a, min=-88, max=88)))
 
 
+def retrieve_elements_from_indices(tensor, indices):
+    flattened_tensor = tensor.flatten(start_dim=2)
+    output = flattened_tensor.gather(dim=2, index=indices.flatten(start_dim=2)).view_as(indices)
+    return output
+
+
 class Linear(torch.nn.Module):
     def __init__(self, in_features, out_features, bias=True, input_flag=False):
         super(Linear, self).__init__()
@@ -13,7 +19,6 @@ class Linear(torch.nn.Module):
         self.sigma = torch.nn.Linear(in_features, out_features, bias)
         torch.nn.init.xavier_normal_(self.mu.weight)
         torch.nn.init.uniform_(self.sigma.weight, a=0, b=5)
-
 
     def forward(self, mu_x, sigma_x=torch.tensor(0., requires_grad=True)):
         if self.input_flag:
@@ -34,6 +39,62 @@ class Linear(torch.nn.Module):
         return kl
 
 
+class Conv2D(torch.nn.Module):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size=(5, 5), stride=1, padding=0, dilation=1,
+                 groups=1, bias=True, padding_mode='zeros',
+                 input_flag=False):
+        super(Conv2D, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.input_flag = input_flag
+        self.mu = torch.nn.Conv2d(in_channels, out_channels,
+                                  kernel_size, stride, padding, dilation,
+                                  groups, bias, padding_mode)
+        torch.nn.init.xavier_normal_(self.mu.weight)
+        self.sigma = torch.nn.Linear(1, out_channels, bias=bias)
+        torch.nn.init.uniform_(self.sigma.weight, a=0, b=5)
+
+        self.unfold = torch.nn.Unfold(kernel_size, dilation, padding, stride)
+
+    def forward(self, mu_x, sigma_x=torch.tensor(0., requires_grad=True)):
+        if self.input_flag:
+            mu_y = self.mu(mu_x)
+            vec_x = self.unfold(mu_x)
+            sigma_y = softplus(self.sigma.weight).repeat(1, vec_x.shape[1]) @ vec_x ** 2
+            sigma_y = sigma_y.view(mu_y.shape[0], mu_y.shape[1], mu_y.shape[2], mu_y.shape[3])
+            pass
+        else:
+            mu_y = self.mu(mu_x)
+            vec_x = self.unfold(mu_x)
+            sigma_y = (softplus(self.sigma.weight).repeat(1, vec_x.shape[1]) @ self.unfold(sigma_x)) + \
+                      (self.mu.weight.view(self.out_channels, -1)**2 @ self.unfold(sigma_x).T).T + \
+                      (softplus(self.sigma.weight).repeat(1, vec_x.shape[1]) @ (vec_x ** 2).T).T
+            sigma_y = sigma_y.view(mu_y.shape[0], mu_y.shape[1], mu_y.shape[2], mu_y.shape[3])
+        return mu_y, sigma_y
+
+    def kl_term(self):
+        kl = 0.5*torch.mean(self.kernel_size * softplus(self.sigma.weight) + torch.norm(self.mu.weight)**2
+                            - self.kernel_size - self.kernel_size * torch.log(softplus(self.sigma.weight)))
+        return kl
+
+
+class MaxPool2D(torch.nn.Module):
+    def __init__(self, kernel_size=2, stride=2, padding=0, dilation=1,
+                 return_indices=True, ceil_mode=False):
+        super(MaxPool2D, self).__init__()
+        self.mu = torch.nn.MaxPool2d(kernel_size, stride, padding, dilation, return_indices, ceil_mode)
+
+    def forward(self, mu_x, sigma_x):
+        mu_y, where = self.mu(mu_x)
+        sigma_y = retrieve_elements_from_indices(sigma_x, where)
+        return mu_y, sigma_y
+
+
 class ReLU(torch.nn.Module):
     def __init__(self):
         super(ReLU, self).__init__()
@@ -52,7 +113,6 @@ class Softmax(torch.nn.Module):
 
     def forward(self, mu, sigma):
         mu = self.softmax(mu)
-        # print(mu)
         J = mu*(1-mu)
         sigma = (J**2) * sigma
         return mu, sigma
@@ -60,10 +120,7 @@ class Softmax(torch.nn.Module):
 
 def ELBOLoss(mu, sigma, y):
     y_hot = torch.nn.functional.one_hot(y, num_classes=10)
-    num_samples = y_hot.shape[0]
     sigma_clamped = torch.log(1+torch.exp(torch.clamp(sigma, 0, 88)))
-    # print(torch.sum(sigma))
-    # print(torch.sum(sigma_clamped))
     log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1)))
-    log_likelihood = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
-    return log_det, log_likelihood
+    nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
+    return log_det, nll

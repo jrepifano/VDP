@@ -16,6 +16,8 @@ os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
+
+
 class Model(torch.nn.Module):
     def __init__(self):
         super(Model, self).__init__()
@@ -37,7 +39,7 @@ class Model(torch.nn.Module):
         return mu, sigma
 
     def score(self, logits, y):
-        score = torch.sum(torch.argmax(logits, dim=1) == y)/len(logits)
+        score = torch.sum(torch.argmax(logits, dim=1) == y) / len(logits)
         return score.cpu().numpy()
 
 
@@ -53,9 +55,9 @@ def main():
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
     mnist_train = FashionMNIST(os.getcwd(), train=True, download=True, transform=transform)
     mnist_test = FashionMNIST(os.getcwd(), train=False, download=True, transform=transform)
-    # trainloader = DataLoader(mnist_train, batch_size=1000, num_workers=2,
+    # trainloader = DataLoader(mnist_train, batch_size=10, num_workers=2,
     #                          shuffle=True)  # IF YOU CAN FIT THE DATA INTO MEMORY DO NOT USE DATALOADERS
-    # testloader = DataLoader(mnist_test, batch_size=1000, num_workers=2, shuffle=True)
+    # testloader = DataLoader(mnist_test, batch_size=10, num_workers=2, shuffle=True)
     x_train, y_train = mnist_train.data.view(60000, -1)/255.0, mnist_train.targets
     x_test, y_test = mnist_test.data.view(10000, -1)/255.0, mnist_test.targets
     model = Model()
@@ -70,8 +72,8 @@ def main():
     beta_1 = 0.1
     beta_2 = 0.4
     for epoch in range(no_epochs):
-        model.train()
         total_loss = 0
+        model.train()
         optimizer.zero_grad()
         mu, sigma = model.forward(x_train.float().to('cuda:0'))
         log_det_i, log_likelihood_i = vdp.ELBOLoss(mu, sigma, y_train.to('cuda:0'))
@@ -89,38 +91,37 @@ def main():
         mu, sigma = model.forward(x_test.float().to('cuda:0'))
         test_acc = model.score(mu, y_test.to('cuda:0'))
         test_accs.append(test_acc)
-        if (epoch % 500) == 0 or (epoch == no_epochs-1):
-            print('log det: {:.4f}'.format(alpha*log_det_i))
-            print('likelihood: {:.4f}'.format(log_likelihood_i))
-            print('kl: {:.4f}'.format(kl_i))
-            print('Epoch {}/{}: Training Loss: {:.2f}'.format(epoch + 1, no_epochs, total_loss))
-            print('Train Accuracy: {:.2f}'.format(train_acc))
-            print('Test Accuracy: {:.2f}'.format(test_acc))
-            mu_1 = pd.DataFrame(model.layer_1.mu.weight.view(-1, 1).detach().cpu().numpy(), columns=['layer_1'])
-            mu_2 = pd.DataFrame(model.layer_2.mu.weight.view(-1, 1).detach().cpu().numpy(), columns=['layer_2'])
-            sns.kdeplot(mu_1['layer_1'], shade=True, label='Layer 1')
-            sns.kdeplot(mu_2['layer_2'], shade=True, label='Layer 2')
-            plt.legend()
-            plt.title('Mu Epoch {}'.format(epoch))
-            # plt.savefig('variable_tau/mu_epoch_{}.png'.format(epoch))
-            plt.show()
-            plt.clf()
-            sig_1 = pd.DataFrame(model.layer_1.sigma.weight.view(-1, 1).detach().cpu().numpy(), columns=['layer_1'])
-            sig_2 = pd.DataFrame(model.layer_2.sigma.weight.view(-1, 1).detach().cpu().numpy(), columns=['layer_2'])
-            sns.kdeplot(sig_1['layer_1'], shade=True, label='Layer 1')
-            sns.kdeplot(sig_2['layer_2'], shade=True, label='Layer 2')
-            plt.legend()
-            plt.title('Sigma Epoch {}'.format(epoch))
-            # plt.savefig('variable_tau/sigma_epoch_{}.png'.format(epoch))
-            plt.show()
-            plt.clf()
-    plt.plot(np.arange(no_epochs), train_accs, label='Train Accuracy')
-    plt.plot(np.arange(no_epochs), test_accs, label='Test Accuracy')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy')
-    plt.title('Fashion MNIST: Small Network VDP++')
-    plt.legend()
-    plt.show()
+        # if (epoch % 500) == 0 or (epoch == no_epochs-1):
+        #     print('log det: {:.4f}'.format(alpha*log_det_i))
+        #     print('likelihood: {:.4f}'.format(log_likelihood_i))
+        #     print('kl: {:.4f}'.format(kl_i))
+        #     print('Epoch {}/{}: Training Loss: {:.2f}'.format(epoch + 1, no_epochs, total_loss))
+        #     print('Train Accuracy: {:.2f}'.format(train_acc))
+        #     mu_1 = pd.DataFrame(model.layer_1.mu.weight.view(-1, 1).detach().cpu().numpy(), columns=['layer_1'])
+        #     mu_2 = pd.DataFrame(model.layer_2.mu.weight.view(-1, 1).detach().cpu().numpy(), columns=['layer_2'])
+        #     sns.kdeplot(mu_1['layer_1'], shade=True, label='Layer 1')
+        #     sns.kdeplot(mu_2['layer_2'], shade=True, label='Layer 2')
+        #     plt.legend()
+        #     plt.title('Mu Epoch {}'.format(epoch))
+        #     # plt.savefig('variable_tau/mu_epoch_{}.png'.format(epoch))
+        #     plt.show()
+        #     plt.clf()
+        #     sig_1 = pd.DataFrame(model.layer_1.sigma.weight.view(-1, 1).detach().cpu().numpy(), columns=['layer_1'])
+        #     sig_2 = pd.DataFrame(model.layer_2.sigma.weight.view(-1, 1).detach().cpu().numpy(), columns=['layer_2'])
+        #     sns.kdeplot(sig_1['layer_1'], shade=True, label='Layer 1')
+        #     sns.kdeplot(sig_2['layer_2'], shade=True, label='Layer 2')
+        #     plt.legend()
+        #     plt.title('Sigma Epoch {}'.format(epoch))
+        #     # plt.savefig('variable_tau/sigma_epoch_{}.png'.format(epoch))
+        #     plt.show()
+        #     plt.clf()
+    # plt.plot(np.arange(no_epochs), train_accs, label='Train Accuracy')
+    # plt.plot(np.arange(no_epochs), test_accs, label='Test Accuracy')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Accuracy')
+    # plt.title('Fashion MNIST: Small Network VDP++')
+    # plt.legend()
+    # plt.show()
     # plt.savefig('variable_tau/learning_curve.png')
     # torch.save(model.state_dict(), 'vdp.pt')
     # plt.plot(np.arange(no_epochs), log_det, label='Log determinant')
@@ -139,18 +140,18 @@ def main():
     # plt.legend()
     # plt.show()
     # print('Train and val time for {} epochs: {:.2f}'.format(no_epochs, (time.time()-start_time)))
-    # snrs = [-6, -3, 1, 5, 10, 20]
-    # sigmas = list()
-    # for snr in range(len(snrs)):
-    #     x_noisy = add_noise(x_test.cpu().numpy(), snrs[snr])
-    #     mu, sigma = model.forward(torch.from_numpy(x_noisy).float().to('cuda:0'))
-    #     sigmas.append(torch.mean(torch.mean(sigma, dim=1)).detach().cpu().numpy())
-    # plt.figure()
-    # plt.plot(snrs, sigmas)
-    # plt.xlabel('SNR (dB)')
-    # plt.ylabel('Mean Mean Test Sigma')
-    # plt.title('Fashion MNIST: Small network VDP++')
-    # plt.show()
+    snrs = [-6, -3, 1, 5, 10, 20]
+    sigmas = list()
+    for snr in range(len(snrs)):
+        x_noisy = add_noise(x_test.cpu().numpy(), snrs[snr])
+        mu, sigma = model.forward(torch.from_numpy(x_noisy).float().to('cuda:0'))
+        sigmas.append(torch.mean(torch.mean(sigma, dim=1)).detach().cpu().numpy())
+    plt.figure()
+    plt.plot(snrs, sigmas)
+    plt.xlabel('SNR (dB)')
+    plt.ylabel('Mean Mean Test Sigma')
+    plt.title('Fashion MNIST: Small network VDP++')
+    plt.show()
     # print(init_norms_mu)
     # print([torch.norm(model.layer_1.mu.weight), torch.norm(model.layer_2.mu.weight), torch.norm(model.layer_3.mu.weight)])
     # print(init_norms)
