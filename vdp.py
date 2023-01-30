@@ -1,3 +1,4 @@
+import math
 import torch
 
 
@@ -39,12 +40,12 @@ class Linear(torch.nn.Module):
         return kl
 
 
-class Conv2D(torch.nn.Module):
+class Conv2d(torch.nn.Module):
     def __init__(self, in_channels, out_channels,
                  kernel_size=(5, 5), stride=1, padding=0, dilation=1,
                  groups=1, bias=True, padding_mode='zeros',
                  input_flag=False):
-        super(Conv2D, self).__init__()
+        super(Conv2d, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
@@ -72,8 +73,8 @@ class Conv2D(torch.nn.Module):
             mu_y = self.mu(mu_x)
             vec_x = self.unfold(mu_x)
             sigma_y = (softplus(self.sigma.weight).repeat(1, vec_x.shape[1]) @ self.unfold(sigma_x)) + \
-                      (self.mu.weight.view(self.out_channels, -1)**2 @ self.unfold(sigma_x).T).T + \
-                      (softplus(self.sigma.weight).repeat(1, vec_x.shape[1]) @ (vec_x ** 2).T).T
+                      (self.mu.weight.view(self.out_channels, -1)**2 @ self.unfold(sigma_x).permute(2, 1, 0)).permute(2, 1, 0) + \
+                      (softplus(self.sigma.weight).repeat(1, vec_x.shape[1]) @ (vec_x ** 2).permute(2, 1, 0)).permute(2, 1, 0)
             sigma_y = sigma_y.view(mu_y.shape[0], mu_y.shape[1], mu_y.shape[2], mu_y.shape[3])
         return mu_y, sigma_y
 
@@ -83,10 +84,10 @@ class Conv2D(torch.nn.Module):
         return kl
 
 
-class MaxPool2D(torch.nn.Module):
+class MaxPool2d(torch.nn.Module):
     def __init__(self, kernel_size=2, stride=2, padding=0, dilation=1,
                  return_indices=True, ceil_mode=False):
-        super(MaxPool2D, self).__init__()
+        super(MaxPool2d, self).__init__()
         self.mu = torch.nn.MaxPool2d(kernel_size, stride, padding, dilation, return_indices, ceil_mode)
 
     def forward(self, mu_x, sigma_x):
@@ -98,7 +99,7 @@ class MaxPool2D(torch.nn.Module):
 class ReLU(torch.nn.Module):
     def __init__(self):
         super(ReLU, self).__init__()
-        self.relu = torch.nn.ReLU()
+        self.relu = torch.nn.SELU()
 
     def forward(self, mu, sigma):
         mu_a = self.relu(mu)
@@ -118,9 +119,64 @@ class Softmax(torch.nn.Module):
         return mu, sigma
 
 
+class BatchNorm2d(torch.nn.Module):
+    def __init__(self, num_features):
+        super(BatchNorm2d, self).__init__()
+        self.mu = torch.nn.BatchNorm2d(num_features)
+
+    def forward(self, mu, sigma):
+        mu_a = self.mu(mu)
+        bn_param = ((self.mu.weight/(torch.sqrt(self.mu.running_var + self.mu.eps))) ** 2)
+        sigma_a = bn_param[None, :, None, None] * sigma
+        return mu_a, sigma_a
+
+
 def ELBOLoss(mu, sigma, y):
     y_hot = torch.nn.functional.one_hot(y, num_classes=10)
     sigma_clamped = torch.log(1+torch.exp(torch.clamp(sigma, 0, 88)))
     log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1)))
     nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
     return log_det, nll
+
+
+def orderOfMagnitude(number):
+    return math.floor(math.log(number, 10))
+
+
+def scale_hyperp(log_det, nll, kl):
+    # Find the alpha scaling factor
+    lli_power = orderOfMagnitude(nll)
+    ldi_power = orderOfMagnitude(log_det)
+    alpha = 10**(lli_power - ldi_power)     # log_det_i needs to be 1 less power than log_likelihood_i
+
+    beta = list()
+    # Find scaling factor for each kl term
+    kl = [i.item() for i in kl]
+    smallest_power = orderOfMagnitude(min(kl))
+    for i in range(len(kl)):
+        power = orderOfMagnitude(kl[i])
+        power = smallest_power-power
+        beta.append(1)
+        # beta.append(10.0**power)
+
+    # Find the tau scaling factor
+    tau = 10**(smallest_power - lli_power)
+
+    return alpha, tau
+
+
+def gather_kl(model):
+    kl = list()
+    for layer in model.children():
+        if hasattr(layer, 'kl_term'):
+            kl.append(layer.kl_term())
+        elif isinstance(layer, torch.nn.Sequential):
+            for sublayer in layer.children():
+                if hasattr(sublayer, 'kl_term'):
+                    kl.append(sublayer.kl_term())
+                elif isinstance(sublayer, torch.nn.Module):
+                    for subsublayer in sublayer.children():
+                        if hasattr(subsublayer, 'kl_term'):
+                            kl.append(subsublayer.kl_term())
+
+    return kl
