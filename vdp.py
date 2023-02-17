@@ -32,6 +32,7 @@ class Linear(torch.nn.Module):
                       (self.mu.weight**2 @ sigma_x.T).T + \
                       (mu_x ** 2 @ softplus(self.sigma.weight).T) + self.sigma.bias
             pass
+        sigma_y *= 1e-3
         return mu_y, sigma_y
 
     def kl_term(self):
@@ -76,6 +77,7 @@ class Conv2d(torch.nn.Module):
                       (self.mu.weight.view(self.out_channels, -1)**2 @ self.unfold(sigma_x).permute(2, 1, 0)).permute(2, 1, 0) + \
                       (softplus(self.sigma.weight).repeat(1, vec_x.shape[1]) @ (vec_x ** 2).permute(2, 1, 0)).permute(2, 1, 0)
             sigma_y = sigma_y.view(mu_y.shape[0], mu_y.shape[1], mu_y.shape[2], mu_y.shape[3])
+        sigma_y *= 1e-3
         return mu_y, sigma_y
 
     def kl_term(self):
