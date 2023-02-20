@@ -16,6 +16,7 @@ class Linear(torch.nn.Module):
     def __init__(self, in_features, out_features, bias=True, input_flag=False):
         super(Linear, self).__init__()
         self.input_flag = input_flag
+        self.bias = bias
         self.mu = torch.nn.Linear(in_features, out_features, bias)
         self.sigma = torch.nn.Linear(in_features, out_features, bias)
         torch.nn.init.xavier_normal_(self.mu.weight)
@@ -24,14 +25,21 @@ class Linear(torch.nn.Module):
     def forward(self, mu_x, sigma_x=torch.tensor(0., requires_grad=True)):
         if self.input_flag:
             mu_y = self.mu(mu_x)
-            sigma_y = mu_x ** 2 @ softplus(self.sigma.weight).T + self.sigma.bias
+            sigma_y = mu_x ** 2 @ softplus(self.sigma.weight).T
             pass
         else:
             mu_y = self.mu(mu_x)
-            sigma_y = (softplus(self.sigma.weight) @ sigma_x.T).T + \
-                      (self.mu.weight**2 @ sigma_x.T).T + \
-                      (mu_x ** 2 @ softplus(self.sigma.weight).T) + self.sigma.bias
+            if len(sigma_x.shape) > 2:
+                sigma_y = (softplus(self.sigma.weight) @ sigma_x.mT).mT + \
+                          (self.mu.weight**2 @ sigma_x.mT).mT + \
+                          (mu_x ** 2 @ softplus(self.sigma.weight).mT)
+            else:
+                sigma_y = (softplus(self.sigma.weight) @ sigma_x.T).T + \
+                        (self.mu.weight**2 @ sigma_x.T).T + \
+                        (mu_x ** 2 @ softplus(self.sigma.weight).T)
             pass
+        if self.bias:
+            sigma_y += self.sigma.bias
         sigma_y *= 1e-3
         return mu_y, sigma_y
 
@@ -107,12 +115,32 @@ class ReLU(torch.nn.Module):
         mu_a = self.relu(mu)
         sigma_a = sigma * (torch.autograd.grad(torch.sum(mu_a), mu, create_graph=True, retain_graph=True)[0]**2)
         return mu_a, sigma_a
+    
+class GELU(torch.nn.Module):
+    def __init__(self):
+        super(GELU, self).__init__()
+        self.gelu = torch.nn.GELU()
+
+    def forward(self, mu, sigma):
+        mu_a = self.gelu(mu)
+        sigma_a = sigma * (torch.autograd.grad(torch.sum(mu_a), mu, create_graph=True, retain_graph=True)[0]**2)
+        return mu_a, sigma_a
+    
+class Sigmoid(torch.nn.Module):
+    def __init__(self):
+        super(Sigmoid, self).__init__()
+        self.sigmoid = torch.nn.Sigmoid()
+    
+    def forward(self, mu, sigma):
+        mu_a = self.sigmoid(mu)
+        sigma_a = sigma * (torch.autograd.grad(torch.sum(mu_a), mu, create_graph=True, retain_graph=True)[0]**2)
+        return mu_a, sigma_a
 
 
 class Softmax(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, dim=1):
         super(Softmax, self).__init__()
-        self.softmax = torch.nn.Softmax(dim=1)
+        self.softmax = torch.nn.Softmax(dim=dim)
 
     def forward(self, mu, sigma):
         mu = self.softmax(mu)
@@ -131,13 +159,32 @@ class BatchNorm2d(torch.nn.Module):
         bn_param = ((self.mu.weight/(torch.sqrt(self.mu.running_var + self.mu.eps))) ** 2)
         sigma_a = bn_param[None, :, None, None] * sigma
         return mu_a, sigma_a
+    
 
+class LayerNorm(torch.nn.Module):
+    def __init__(self, normalized_shape):
+        super(LayerNorm, self).__init__()
+        self.mu = torch.nn.LayerNorm(normalized_shape)
 
-def ELBOLoss(mu, sigma, y):
-    y_hot = torch.nn.functional.one_hot(y, num_classes=10)
+    def forward(self, mu, sigma):
+        mu_a = self.mu(mu)
+        bn_param = ((self.mu.weight.unsqueeze(0)/(torch.sqrt(mu.var((-1), keepdim=True, unbiased=False) + self.mu.eps))) ** 2)
+        sigma_a = bn_param * sigma
+        return mu_a, sigma_a
+    
+
+def ELBOLoss(mu, sigma, y, num_classes=10, criterion='nll'):
+    y_hot = torch.nn.functional.one_hot(y, num_classes=num_classes)
     sigma_clamped = torch.log(1+torch.exp(torch.clamp(sigma, 0, 88)))
-    log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1)))
-    nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
+    if num_classes > 10:
+        log_det = torch.mean(torch.log(torch.log(torch.sum(sigma_clamped, dim=1))))
+    else:   
+        log_det = torch.mean(torch.log(torch.prod(sigma_clamped, dim=1)))
+    if criterion == 'nll':
+        nll = torch.mean(((y_hot-mu)**2).T @ torch.reciprocal(sigma_clamped))
+    elif criterion == 'ce':
+        criterion = torch.nn.CrossEntropyLoss()
+        nll = criterion(mu, y)
     return log_det, nll
 
 
@@ -169,16 +216,18 @@ def scale_hyperp(log_det, nll, kl):
 
 def gather_kl(model):
     kl = list()
-    for layer in model.children():
+    for layer in model.modules():
         if hasattr(layer, 'kl_term'):
             kl.append(layer.kl_term())
-        elif isinstance(layer, torch.nn.Sequential):
-            for sublayer in layer.children():
-                if hasattr(sublayer, 'kl_term'):
-                    kl.append(sublayer.kl_term())
-                elif isinstance(sublayer, torch.nn.Module):
-                    for subsublayer in sublayer.children():
-                        if hasattr(subsublayer, 'kl_term'):
-                            kl.append(subsublayer.kl_term())
-
     return kl
+
+
+class AdaptiveAvgPool2d(torch.nn.Module):
+    def init(self, shape=(1,1)):
+        super(AdaptiveAvgPool2d, self).init()
+        self.avgpool = torch.nn.AdaptiveAvgPool2d(shape)
+
+    def forward(self, mu, sigma):
+        mu_y = self.avgpool(mu)
+        sigma_y = self.avgpool(sigma) + torch.var(mu)
+        return mu_y, sigma_y
